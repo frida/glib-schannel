@@ -11,22 +11,37 @@ tlsschannel_sources = [
 
 schannel_args = ['-DSECURITY_WIN32=1']
 
-gioschannel = shared_module('gioschannel',
-  tlsschannel_sources,
-  dependencies: [tlsbase_dep, schannel_dep, gio, glib, gobject ],
-  include_directories: config_h_include,
-  install: true,
-  install_dir: giomoduledir,
-  c_args: extra_args + common_flags + schannel_args,
-)
+platform_deps = [schannel_dep, gio, glib, gobject]
 
-gioschannel_static = static_library('gioschannel-static',
+if gio_supports_plugins
+  gioschannel = shared_module('gioschannel',
+    tlsschannel_sources,
+    dependencies: [tlsbase_dep, platform_deps],
+    include_directories: [config_h_include, tlsbase_incdir],
+    install: true,
+    install_dir: giomoduledir,
+    c_args: extra_args + common_flags + schannel_args,
+  )
+endif
+
+gioschannel_static = static_library('gioschannel',
   tlsschannel_sources,
-  dependencies: [tlsbase_dep, schannel_dep, gio, glib, gobject ],
-  include_directories: config_h_include,
+  dependencies: platform_deps,
+  objects: tlsbase.extract_all_objects(),
+  include_directories: [config_h_include, tlsbase_incdir],
   install: true,
   install_dir: giomoduledir,
   c_args: extra_args + common_flags + schannel_args + ['-DG_IO_MODULE_BUILD_STATIC'],
+)
+install_headers(['gioschannel.h'])
+install_data(['gioschannel.vapi'], install_dir: join_paths(get_option('datadir'), 'vala', 'vapi'))
+pkg = import('pkgconfig')
+pkg.generate(filebase: 'gioschannel',
+  name: 'gioschannel',
+  version: meson.project_version(),
+  description: 'GLib GIO TLS backend using the Windows SChannel API',
+  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0'],
+  libraries: [gioschannel_static]
 )
 
 gioschannel_inc = include_directories([ '.', '..' ])

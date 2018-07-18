@@ -10,8 +10,22 @@ glib_req = '2.46.0'
 glib = dependency('glib-2.0', version: '>=' + glib_req)
 gobject = dependency('gobject-2.0', version: '>=' + glib_req)
 gio = dependency('gio-2.0', version: '>=' + glib_req)
-giomoduledir = gio.get_pkgconfig_variable('giomoduledir')
-gio_querymodules = find_program('gio-querymodules')
+
+libdir = join_paths(get_option('prefix'), get_option('libdir'))
+giomoduledir = gio.get_pkgconfig_variable('giomoduledir',
+  define_variable: ['libdir', libdir])
+
+gio_supports_plugins = cc.compiles('''
+#include <glib.h>
+#ifdef GIO_STATIC_COMPILATION
+# error GIO does not support plugins
+#endif''',
+  name: 'GIO supports plugins',
+  dependencies: [gio])
+
+if gio_supports_plugins
+  gio_querymodules = find_program('gio-querymodules')
+endif
 
 cc.has_header('windows.h')
 cc.has_header('security.h')
