@@ -132,13 +132,15 @@ g_tls_database_schannel_lookup_certificate_for_handle (GTlsDatabase *database, c
   }
   hash_blob.cbData = hash_blob_length;
 
-  if (!(cert_context = CertFindCertificateInStore (priv->cert_store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0,
-                                                   CERT_FIND_HASH |
-                                                   ((flags & G_TLS_DATABASE_LOOKUP_KEYPAIR) ? CERT_FIND_HAS_PRIVATE_KEY : 0),
-                                                   &hash_blob, NULL))) {
-    g_free (hash_blob.pbData);
+  cert_context = CertFindCertificateInStore (priv->cert_store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0,
+                                             CERT_FIND_HASH |
+                                             ((flags & G_TLS_DATABASE_LOOKUP_KEYPAIR) ? CERT_FIND_HAS_PRIVATE_KEY : 0),
+                                             &hash_blob, NULL);
+
+  g_free (hash_blob.pbData);
+
+  if (!cert_context)
     return NULL;
-  }
 
   return g_tls_certificate_schannel_new_from_context(database, cert_context);
 }
