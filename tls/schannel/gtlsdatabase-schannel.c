@@ -134,13 +134,31 @@ g_tls_database_schannel_lookup_certificate_for_handle (GTlsDatabase *database, c
 
   cert_context = CertFindCertificateInStore (priv->cert_store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0,
                                              CERT_FIND_HASH |
+#ifdef CERT_FIND_HAS_PRIVATE_KEY
                                              ((flags & G_TLS_DATABASE_LOOKUP_KEYPAIR) ? CERT_FIND_HAS_PRIVATE_KEY : 0),
+#else
+                                             0,
+#endif
                                              &hash_blob, NULL);
 
   g_free (hash_blob.pbData);
 
   if (!cert_context)
     return NULL;
+
+#ifndef CERT_FIND_HAS_PRIVATE_KEY
+  if (flags & G_TLS_DATABASE_LOOKUP_KEYPAIR) {
+    DWORD spec, length;
+    gboolean has_private_key;
+
+    length = sizeof (spec);
+    has_private_key = CertGetCertificateContextProperty (cert_context, CERT_KEY_SPEC_PROP_ID, &spec, &length);
+    if (!has_private_key) {
+      CertFreeCertificateContext (cert_context);
+      return NULL;
+    }
+  }
+#endif
 
   return g_tls_certificate_schannel_new_from_context(database, cert_context);
 }
@@ -188,7 +206,7 @@ g_tls_database_schannel_lookup_certificates_issued_by (GTlsDatabase *database, G
   cert_context = NULL;
   while ((cert_context = CertFindCertificateInStore (priv->cert_store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0,
                                                      CERT_FIND_ISSUER_NAME |
-                                                     ((flags & G_TLS_DATABASE_LOOKUP_KEYPAIR) ? CERT_FIND_HAS_PRIVATE_KEY : 0),
+                                                     0,
                                                      &name_blob, cert_context))) {
     g_queue_push_tail (&certificates, g_tls_certificate_schannel_new_from_context(database,
                                                                                   CertDuplicateCertificateContext (cert_context)));

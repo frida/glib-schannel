@@ -22,6 +22,10 @@
 
 #include "gtlsutils-schannel.h"
 
+#ifndef CERT_TRUST_HAS_WEAK_SIGNATURE
+# define CERT_TRUST_HAS_WEAK_SIGNATURE 0x00100000
+#endif
+
 gchar *
 g_tls_schannel_socket_connectable_to_string (GSocketConnectable *identity)
 {

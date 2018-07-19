@@ -48,7 +48,17 @@ typedef struct _GTlsCertificateSchannelPrivate {
   GTlsCertificate *issuer;
 } GTlsCertificateSchannelPrivate;
 
+typedef struct _GTlsNCryptApi {
+  SECURITY_STATUS (WINAPI *open_storage_provider) (NCRYPT_PROV_HANDLE *provider, LPCWSTR provider_name, DWORD flags);
+  SECURITY_STATUS (WINAPI *import_key) (NCRYPT_PROV_HANDLE provider, NCRYPT_KEY_HANDLE import_key, LPCWSTR blob_type,
+                                        NCryptBufferDesc *parameter_list, NCRYPT_KEY_HANDLE *key, PBYTE data,
+                                        DWORD data_size, DWORD flags);
+  SECURITY_STATUS (WINAPI *free_object) (NCRYPT_HANDLE object);
+} GTlsNCryptApi;
+
 static void g_tls_certificate_schannel_initable_interface_init (GInitableIface *iface);
+
+static GTlsNCryptApi *g_tls_ncrypt_api_try_get (void);
 
 G_DEFINE_TYPE_WITH_CODE (GTlsCertificateSchannel, g_tls_certificate_schannel, G_TYPE_TLS_CERTIFICATE,
                          G_ADD_PRIVATE (GTlsCertificateSchannel)
@@ -73,23 +83,53 @@ static void
 g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schannel, guint8 *der, gsize der_length)
 {
   GTlsCertificateSchannelPrivate *priv = g_tls_certificate_schannel_get_instance_private (schannel);
+  GTlsNCryptApi *ncrypt;
   NCRYPT_PROV_HANDLE provider;
+  DWORD extra_get_name_flags;
   wchar_t *cert_name = NULL;
   DWORD cert_name_length;
   NCryptBuffer buffer;
   NCryptBufferDesc buffer_desc;
   CRYPT_KEY_PROV_INFO prov_info;
 
-  if (NCryptOpenStorageProvider (&provider, MS_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS) {
+  ncrypt = g_tls_ncrypt_api_try_get ();
+  if (ncrypt == NULL) {
+    g_warning ("NCrypt API not available on this version of Windows");
+    return;
+  }
+
+  if (ncrypt->open_storage_provider (&provider, MS_KEY_STORAGE_PROVIDER, 0) != ERROR_SUCCESS) {
     g_warn_if_reached ();
     return;
   }
+
+#ifdef CERT_NAME_SEARCH_ALL_NAMES_FLAG
+  extra_get_name_flags = CERT_NAME_SEARCH_ALL_NAMES_FLAG;
+#else
+# define GLIB_SCHANNEL_CERT_NAME_SEARCH_ALL_NAMES_FLAG 0x2
+  {
+    OSVERSIONINFOEXW vi = { sizeof (vi), 0, };
+    DWORD type_mask;
+    DWORDLONG condition_mask;
+    gboolean is_win8_or_newer;
+
+    vi.dwMajorVersion = 6;
+    vi.dwMinorVersion = 2;
+    type_mask = VER_MAJORVERSION | VER_MINORVERSION;
+    condition_mask = VerSetConditionMask (VerSetConditionMask (0,
+                                          VER_MAJORVERSION, VER_GREATER_EQUAL),
+                                          VER_MINORVERSION, VER_GREATER_EQUAL);
+    is_win8_or_newer = VerifyVersionInfoW (&vi, type_mask, condition_mask);
+
+    extra_get_name_flags = is_win8_or_newer ? GLIB_SCHANNEL_CERT_NAME_SEARCH_ALL_NAMES_FLAG : 0;
+  }
+#endif
 
   /* We store the key under the name of the certificate and attach
    * it under that name to the certificate. This way SChannel can
    * find it again at a later time */
   cert_name_length = CertGetNameStringW (priv->cert_context, CERT_NAME_DNS_TYPE,
-                                         CERT_NAME_DISABLE_IE4_UTF8_FLAG | CERT_NAME_SEARCH_ALL_NAMES_FLAG,
+                                         CERT_NAME_DISABLE_IE4_UTF8_FLAG | extra_get_name_flags,
                                          NULL, NULL, 0);
   if (cert_name_length <= 1) {
     g_warn_if_reached ();
@@ -97,7 +137,7 @@ g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schanne
   }
   cert_name = g_new0 (wchar_t, cert_name_length);
   CertGetNameStringW (priv->cert_context, CERT_NAME_DNS_TYPE,
-                      CERT_NAME_DISABLE_IE4_UTF8_FLAG | CERT_NAME_SEARCH_ALL_NAMES_FLAG,
+                      CERT_NAME_DISABLE_IE4_UTF8_FLAG | extra_get_name_flags,
                       NULL, cert_name, cert_name_length);
 
   memset (&buffer_desc, 0, sizeof (buffer_desc));
@@ -110,8 +150,8 @@ g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schanne
   buffer.BufferType = NCRYPTBUFFER_PKCS_KEY_NAME;
   buffer.pvBuffer = cert_name;
 
-  if (NCryptImportKey (provider, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, &buffer_desc, &priv->key_handle,
-                       der, der_length, 0) != ERROR_SUCCESS) {
+  if (ncrypt->import_key (provider, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, &buffer_desc, &priv->key_handle,
+                          der, der_length, 0) != ERROR_SUCCESS) {
     g_warn_if_fail (priv->key_handle);
     goto out;
   }
@@ -130,7 +170,7 @@ g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schanne
 out:
   g_free (cert_name);
 
-  NCryptFreeObject (provider);
+  ncrypt->free_object (provider);
 }
 
 static void
@@ -324,7 +364,7 @@ g_tls_certificate_schannel_finalize (GObject * obj)
   }
 
   if (priv->key_handle) {
-    NCryptFreeObject (priv->key_handle);
+    g_tls_ncrypt_api_try_get ()->free_object (priv->key_handle);
     priv->key_handle = 0;
   }
 
@@ -537,4 +577,27 @@ g_tls_certificate_schannel_get_context (GTlsCertificate * certificate)
   GTlsCertificateSchannelPrivate *priv = g_tls_certificate_schannel_get_instance_private (schannel);
 
   return priv->cert_context;
+}
+
+static GTlsNCryptApi *
+g_tls_ncrypt_api_try_get (void)
+{
+  static volatile gsize gonce_value;
+
+  if (g_once_init_enter (&gonce_value)) {
+    GTlsNCryptApi *ncrypt = NULL;
+    HMODULE module;
+
+    module = LoadLibraryW (L"ncrypt.dll");
+    if (module != NULL) {
+      ncrypt = g_slice_new (GTlsNCryptApi);
+      ncrypt->open_storage_provider = (gpointer) GetProcAddress (module, "NCryptOpenStorageProvider");
+      ncrypt->import_key = (gpointer) GetProcAddress (module, "NCryptImportKey");
+      ncrypt->free_object = (gpointer) GetProcAddress (module, "NCryptFreeObject");
+    }
+
+    g_once_init_leave (&gonce_value, GPOINTER_TO_SIZE (ncrypt) + 1);
+  }
+
+  return (GTlsNCryptApi *) GSIZE_TO_POINTER (gonce_value - 1);
 }
