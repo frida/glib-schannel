@@ -224,11 +224,11 @@ g_tls_database_schannel_verify_chain (GTlsDatabase *database, GTlsCertificate *c
 
   /* Add all issuer certificates to a temporary database */
   cert_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL);
-  issuer = g_tls_certificate_get_issuer (cert);
+  issuer = g_tls_certificate_get_issuer (chain);
   while (issuer) {
     PCCERT_CONTEXT issuer_context = g_tls_certificate_schannel_get_context (issuer);
-    CertAddCertificateContextToStore (cert_store, issuer_context);
-    issuer = g_tls_certificate_get_issuer (cert);
+    CertAddCertificateContextToStore (cert_store, issuer_context, CERT_STORE_ADD_NEW, NULL);
+    issuer = g_tls_certificate_get_issuer (issuer);
   }
 
   if (!CertGetCertificateChain (priv->engine, cert_context, NULL, cert_store,
@@ -291,7 +291,7 @@ g_tls_database_schannel_verify_chain (GTlsDatabase *database, GTlsCertificate *c
 
     /* Both flags are set by the code above as we don't know, so check here
      * whether the certificate is not activated yet or expired */
-    cmp = CertVerifyTimeValidity (NULL, priv->cert_context->pCertInfo);
+    cmp = CertVerifyTimeValidity (NULL, cert_context->pCertInfo);
     if (cmp == 1)
       certificate_flags &= ~G_TLS_CERTIFICATE_NOT_ACTIVATED;
     else if (cmp == -1)
