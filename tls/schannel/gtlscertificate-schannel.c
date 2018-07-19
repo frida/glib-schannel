@@ -74,8 +74,7 @@ g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schanne
 {
   GTlsCertificateSchannelPrivate *priv = g_tls_certificate_schannel_get_instance_private (schannel);
   NCRYPT_PROV_HANDLE provider;
-  gchar *cert_name;
-  wchar_t *cert_name_w;
+  wchar_t *cert_name = NULL;
   DWORD cert_name_length;
   NCryptBuffer buffer;
   NCryptBufferDesc buffer_desc;
@@ -89,20 +88,17 @@ g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schanne
   /* We store the key under the name of the certificate and attach
    * it under that name to the certificate. This way SChannel can
    * find it again at a later time */
-  cert_name_length = CertGetNameString (priv->cert_context, CERT_NAME_DNS_TYPE,
-                                        CERT_NAME_DISABLE_IE4_UTF8_FLAG | CERT_NAME_SEARCH_ALL_NAMES_FLAG,
-                                        NULL, NULL, 0);
+  cert_name_length = CertGetNameStringW (priv->cert_context, CERT_NAME_DNS_TYPE,
+                                         CERT_NAME_DISABLE_IE4_UTF8_FLAG | CERT_NAME_SEARCH_ALL_NAMES_FLAG,
+                                         NULL, NULL, 0);
   if (cert_name_length <= 1) {
     g_warn_if_reached ();
-    return;
+    goto out;
   }
-  cert_name = g_new0 (gchar, cert_name_length);
-  CertGetNameString (priv->cert_context, CERT_NAME_DNS_TYPE,
-                     CERT_NAME_DISABLE_IE4_UTF8_FLAG | CERT_NAME_SEARCH_ALL_NAMES_FLAG,
-                     NULL, cert_name, cert_name_length);
-
-  cert_name_w = g_utf8_to_utf16 (cert_name, cert_name_length, NULL, NULL, NULL);
-  g_free (cert_name);
+  cert_name = g_new0 (wchar_t, cert_name_length);
+  CertGetNameStringW (priv->cert_context, CERT_NAME_DNS_TYPE,
+                      CERT_NAME_DISABLE_IE4_UTF8_FLAG | CERT_NAME_SEARCH_ALL_NAMES_FLAG,
+                      NULL, cert_name, cert_name_length);
 
   memset (&buffer_desc, 0, sizeof (buffer_desc));
   buffer_desc.ulVersion = NCRYPTBUFFER_VERSION;
@@ -110,27 +106,29 @@ g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schanne
   buffer_desc.pBuffers = &buffer;
 
   memset (&buffer, 0, sizeof (buffer));
-  buffer.cbBuffer = wchar_len (cert_name_w) + 2;
+  buffer.cbBuffer = cert_name_length * sizeof (wchar_t);
   buffer.BufferType = NCRYPTBUFFER_PKCS_KEY_NAME;
-  buffer.pvBuffer = cert_name_w;
+  buffer.pvBuffer = cert_name;
 
   if (NCryptImportKey (provider, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, &buffer_desc, &priv->key_handle,
                        der, der_length, 0) != ERROR_SUCCESS) {
     g_warn_if_fail (priv->key_handle);
-    return;
+    goto out;
   }
 
   CertSetCertificateContextProperty (priv->cert_context, CERT_NCRYPT_KEY_HANDLE_PROP_ID,
                                      CERT_SET_PROPERTY_INHIBIT_PERSIST_FLAG, &priv->key_handle);
 
   memset (&prov_info, 0, sizeof (prov_info));
-  prov_info.pwszContainerName = cert_name_w;
+  prov_info.pwszContainerName = cert_name;
   prov_info.pwszProvName = MS_KEY_STORAGE_PROVIDER;
   prov_info.dwProvType = 0;
   prov_info.dwFlags = CERT_SET_KEY_PROV_HANDLE_PROP_ID | CERT_SET_KEY_CONTEXT_PROP_ID;
   CertSetCertificateContextProperty (priv->cert_context, CERT_KEY_PROV_INFO_PROP_ID,
                                      CERT_SET_PROPERTY_INHIBIT_PERSIST_FLAG, &prov_info);
-  g_free (cert_name_w);
+
+out:
+  g_free (cert_name);
 
   NCryptFreeObject (provider);
 }
