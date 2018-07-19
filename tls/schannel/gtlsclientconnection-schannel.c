@@ -170,7 +170,7 @@ g_tls_client_connection_schannel_handshake (GTlsConnectionBase *tls, GCancellabl
   GTlsClientConnectionSchannelPrivate *priv = g_tls_client_connection_schannel_get_instance_private (schannel);
   GTlsConnectionSchannel *base = G_TLS_CONNECTION_SCHANNEL (schannel);
   ULONG req_flags, ret_flags;
-  gchar *aserver_name;
+  gunichar2 *server_name_w;
   SECURITY_STATUS sspi_status;
   gsize to_read;
   gint i;
@@ -178,13 +178,13 @@ g_tls_client_connection_schannel_handshake (GTlsConnectionBase *tls, GCancellabl
   GTlsConnectionBaseStatus ret = G_TLS_CONNECTION_BASE_OK;
 
   if (priv->server_identity) {
-    gchar *server_name = NULL;
+    gchar *server_name;
 
     server_name = g_tls_schannel_socket_connectable_to_string (priv->server_identity);
-    aserver_name = g_locale_from_utf8 (server_name, -1, NULL, NULL, NULL);
+    server_name_w = g_utf8_to_utf16 (server_name, -1, NULL, NULL, NULL);
     g_free (server_name);
   } else {
-    aserver_name = NULL;
+    server_name_w = NULL;
   }
 
 new_credentials:
@@ -310,9 +310,9 @@ new_credentials:
       inbuf_desc.cBuffers = 2;
     }
 
-    sspi_status = InitializeSecurityContext (&base->cred, base->context_valid ? &base->context : NULL, aserver_name,
-                                             req_flags, 0, 0, inbuf[0].cbBuffer > 0 ? &inbuf_desc : NULL, 0,
-                                             &base->context, &outbuf_desc, &ret_flags, NULL);
+    sspi_status = InitializeSecurityContextW (&base->cred, base->context_valid ? &base->context : NULL, server_name_w,
+                                              req_flags, 0, 0, inbuf[0].cbBuffer > 0 ? &inbuf_desc : NULL, 0,
+                                              &base->context, &outbuf_desc, &ret_flags, NULL);
     base->context_valid = TRUE;
 
     /* The server *might* want to get a certificate from us */
@@ -389,7 +389,7 @@ new_credentials:
   }
 
   memset (&base->stream_sizes, 0, sizeof (base->stream_sizes));
-  g_free (aserver_name);
+  g_free (server_name_w);
 
   if (sspi_status == SEC_E_OK) {
     return G_TLS_CONNECTION_BASE_OK;

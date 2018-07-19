@@ -516,6 +516,7 @@ g_tls_file_database_schannel_load (GTlsFileDatabaseSchannel *schannel)
 
   p_begin = g_strstr_len (p_begin, -1, begin_marker);
   while (p_begin) {
+    gunichar2 *cert_pem_w = NULL;
     BYTE *der = NULL;
     DWORD length;
 
@@ -525,8 +526,9 @@ g_tls_file_database_schannel_load (GTlsFileDatabaseSchannel *schannel)
 
     p_begin += begin_length;
     length = p_end - p_begin;
+    cert_pem_w = g_utf8_to_utf16 (p_begin, length, NULL, NULL, NULL);
     der = g_new (BYTE, length);
-    if (!CryptStringToBinary (p_begin, length, CRYPT_STRING_BASE64, der, &length, 0, 0)) {
+    if (!CryptStringToBinaryW (cert_pem_w, 0, CRYPT_STRING_BASE64, der, &length, 0, 0)) {
       g_warn_if_reached ();
       goto next;
     }
@@ -540,6 +542,8 @@ g_tls_file_database_schannel_load (GTlsFileDatabaseSchannel *schannel)
 
 next:
     g_free (der);
+    g_free (cert_pem_w);
+
     p_begin = g_strstr_len (p_end, -1, begin_marker);
   }
 

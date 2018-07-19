@@ -154,24 +154,29 @@ g_tls_certificate_schannel_set_property (GObject * obj, guint property_id, const
       break;
     }
     case PROP_CERTIFICATE_PEM: {
-      const gchar *pem = g_value_get_string (value);
-      BYTE *der = NULL;
+      const gchar *pem;
+      gunichar2 *pem_w;
+      BYTE *der;
       DWORD length;
 
       if (priv->cert_context)
         return;
 
+      pem = g_value_get_string (value);
       if (!pem)
         return;
+      pem_w = g_utf8_to_utf16 (pem, -1, NULL, NULL, NULL);
 
       length = strlen (pem);
       der = g_new (BYTE, length);
-      if (CryptStringToBinary (pem, length, CRYPT_STRING_BASE64_ANY, der, &length, 0, 0)) {
+      if (CryptStringToBinaryW (pem_w, 0, CRYPT_STRING_BASE64_ANY, der, &length, 0, 0)) {
         priv->cert_context = CertCreateCertificateContext (X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
                                                            der, length);
         g_warn_if_fail (priv->cert_context);
       }
       g_free (der);
+
+      g_free (pem_w);
 
       break;
     }
@@ -196,27 +201,31 @@ g_tls_certificate_schannel_set_property (GObject * obj, guint property_id, const
       break;
     }
     case PROP_PRIVATE_KEY_PEM: {
-      const gchar *pem = g_value_get_string (value);
-      BYTE *der = NULL;
+      const gchar *pem;
+      gunichar2 *pem_w;
+      BYTE *der;
       DWORD length;
 
       if (priv->key_handle)
         return;
 
+      pem = g_value_get_string (value);
       g_assert (!pem || priv->cert_context);
       if (!pem)
         return;
+      pem_w = g_utf8_to_utf16 (pem, -1, NULL, NULL, NULL);
 
       length = strlen (pem);
       der = g_new (BYTE, length);
-      if (!CryptStringToBinary (pem, length, CRYPT_STRING_BASE64_ANY, der, &length, 0, 0)) {
+      if (CryptStringToBinaryW (pem_w, 0, CRYPT_STRING_BASE64_ANY, der, &length, 0, 0)) {
+        g_tls_certificate_schannel_import_private_key (schannel, der, length);
+      } else {
         g_warn_if_reached ();
-        g_free (der);
-        return;
       }
-
-      g_tls_certificate_schannel_import_private_key (schannel, der, length);
       g_free (der);
+
+      g_free (pem_w);
+
       break;
     }
     case PROP_DATABASE: {
@@ -260,12 +269,13 @@ g_tls_certificate_schannel_get_property (GObject * obj, guint property_id, GValu
       if (priv->cert_context) {
         DWORD pem_length = 0;
 
-        if (CryptBinaryToString (priv->cert_context->pbCertEncoded, priv->cert_context->cbCertEncoded,
-                                 CRYPT_STRING_BASE64HEADER, NULL, &pem_length)) {
-          gchar *pem = g_new0 (gchar, pem_length + 1);
-          CryptBinaryToString (priv->cert_context->pbCertEncoded, priv->cert_context->cbCertEncoded,
-                               CRYPT_STRING_BASE64HEADER, pem, &pem_length);
-          g_value_take_string (value, pem);
+        if (CryptBinaryToStringW (priv->cert_context->pbCertEncoded, priv->cert_context->cbCertEncoded,
+                                  CRYPT_STRING_BASE64HEADER, NULL, &pem_length)) {
+          gunichar2 *pem = g_new0 (gunichar2, pem_length);
+          CryptBinaryToStringW (priv->cert_context->pbCertEncoded, priv->cert_context->cbCertEncoded,
+                                CRYPT_STRING_BASE64HEADER, pem, &pem_length);
+          g_value_take_string (value, g_utf16_to_utf8 (pem, -1, NULL, NULL, NULL));
+          g_free (pem);
         }
       }
 
