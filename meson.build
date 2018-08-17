@@ -36,6 +36,12 @@ cc.has_header('sspi.h')
 schannel_dep = [cc.find_library('secur32'), cc.find_library('crypt32'), cc.find_library('ncrypt')]
 
 # Compiler flags
+ndebug = get_option('b_ndebug')
+if ndebug == 'true' or (ndebug == 'if-release' and not get_option('debug'))
+  add_project_arguments(['-DG_DISABLE_CAST_CHECKS', '-DG_DISABLE_ASSERT', '-DG_DISABLE_CHECKS'],
+                        language: 'c')
+endif
+
 if cc.get_id() == 'msvc'
   # Make MSVC more pedantic, this is a recommended pragma list
   # from _Win32_Programming_ by Rector and Newcomer.  Taken from
