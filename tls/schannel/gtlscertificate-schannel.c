@@ -25,6 +25,7 @@
 #include "gtlsutils-schannel.h"
 
 #include <ncrypt.h>
+#include <stdio.h>
 #include <wininet.h>
 
 enum {
@@ -131,14 +132,39 @@ g_tls_certificate_schannel_import_private_key (GTlsCertificateSchannel * schanne
   cert_name_length = CertGetNameStringW (priv->cert_context, CERT_NAME_DNS_TYPE,
                                          CERT_NAME_DISABLE_IE4_UTF8_FLAG | extra_get_name_flags,
                                          NULL, NULL, 0);
-  if (cert_name_length <= 1) {
+  if (cert_name_length > 1) {
+    cert_name = g_new0 (wchar_t, cert_name_length);
+    CertGetNameStringW (priv->cert_context, CERT_NAME_DNS_TYPE,
+                        CERT_NAME_DISABLE_IE4_UTF8_FLAG | extra_get_name_flags,
+                        NULL, cert_name, cert_name_length);
+  }
+
+  if (cert_name == NULL) {
+    DWORD id_size;
+
+    id_size = 0;
+    CertGetCertificateContextProperty (priv->cert_context, CERT_KEY_IDENTIFIER_PROP_ID, NULL, &id_size);
+    if (id_size > 0) {
+      BYTE *id;
+      DWORD i;
+
+      id = g_new (BYTE, id_size);
+
+      CertGetCertificateContextProperty (priv->cert_context, CERT_KEY_IDENTIFIER_PROP_ID, id, &id_size);
+
+      cert_name_length = (id_size * 2) + 1;
+      cert_name = g_new (wchar_t, cert_name_length);
+      for (i = 0; i < id_size; i++)
+        swprintf (cert_name + (i * 2), 2 + 1, L"%02x", id[i]);
+
+      g_free (id);
+    }
+  }
+
+  if (cert_name == NULL) {
     g_warn_if_reached ();
     goto out;
   }
-  cert_name = g_new0 (wchar_t, cert_name_length);
-  CertGetNameStringW (priv->cert_context, CERT_NAME_DNS_TYPE,
-                      CERT_NAME_DISABLE_IE4_UTF8_FLAG | extra_get_name_flags,
-                      NULL, cert_name, cert_name_length);
 
   memset (&buffer_desc, 0, sizeof (buffer_desc));
   buffer_desc.ulVersion = NCRYPTBUFFER_VERSION;
