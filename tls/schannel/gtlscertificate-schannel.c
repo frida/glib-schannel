@@ -608,7 +608,7 @@ g_tls_certificate_schannel_get_context (GTlsCertificate * certificate)
 static GTlsNCryptApi *
 g_tls_ncrypt_api_try_get (void)
 {
-  static volatile gsize gonce_value;
+  static gsize gonce_value;
 
   if (g_once_init_enter (&gonce_value)) {
     GTlsNCryptApi *ncrypt = NULL;
